@@ -1,0 +1,143 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = "shaik2022bcs0118/mlops:latest"        
+        CONTAINER_NAME = "shaik2022bcs0118-wine-api"
+        PORT = "8000"
+    }
+
+    stages {
+        stage('Pull Name') {
+            steps {
+                sh 'docker pull $IMAGE_NAME'
+            }
+        }
+        stage('Run Container') {
+            steps {
+                sh '''
+                docker run -d -p $PORT:$PORT $IMAGE_NAME --name "$CONTAINER_NAME"
+                '''
+            }
+        }
+        stage('Service Readiness') {
+            steps {
+                script {
+                    def retries = 10
+                    def ready = false
+                    for (int i = 0; i < retries; i++) {
+                        try {
+                            sh 'curl -f http://localhost:8000/health'
+                            ready = true
+                            break
+                        } catch(err) {
+                            echo 'Waiting...'
+                            sleep(5)
+                        }
+                    }   
+                    if (!ready) { error("Service did not become ready in time") }
+                }
+            }
+        }
+        stage('Validate Inference') {
+            steps {
+                sh '''
+                    set -e
+
+                    cat > valid_payload.json <<'EOF'
+                    {
+                      "fixed_acidity": 7.4,
+                      "volatile_acidity": 0.7,
+                      "citric_acid": 0.0,
+                      "sulphates": 0.56,
+                      "alcohol": 9.4
+                    }
+                    EOF
+
+                    response_file="valid_response.json"
+                    http_code=$(curl -s -o "$response_file" -w "%{http_code}" \
+                      -X POST "http://localhost:${PORT}/predict" \
+                      -H "Content-Type: application/json" \
+                      --data @valid_payload.json)
+
+                    echo "Valid request HTTP code: $http_code"
+                    echo "Valid response:"
+                    cat "$response_file"
+                    echo
+
+                    if [ "$http_code" != "200" ]; then
+                        echo "Expected HTTP 200 for valid request"
+                        exit 1
+                    fi
+                python3 - <<'PY'
+import json
+from pathlib import Path
+
+data = json.loads(Path("valid_response.json").read_text())
+
+required = ["name", "roll_no", "wine_quality"]
+missing = [k for k in required if k not in data]
+if missing:
+    raise SystemExit(f"Missing keys in response: {missing}")
+
+wine_quality = data["wine_quality"]
+if not isinstance(wine_quality, (int, float)):
+    raise SystemExit(f"wine_quality is not numeric: {type(wine_quality)}")
+
+print(f'{{name:"{data["name"]}", roll_no: "{data["roll_no"]}", wine_quality:{wine_quality}}}')
+PY
+                '''
+            }
+        }
+        stage("Invalid Input Test") {
+            steps {
+                sh '''
+                    set -e
+
+                    cat > invalid_payload.json <<'EOF'
+                    {
+                      "fixed_acidity": 7.4,
+                      "volatile_acidity": 0.7
+                    }
+                    EOF
+
+                    http_code=$(curl -s -o invalid_response.json -w "%{http_code}" \
+                      -X POST "http://localhost:${PORT}/predict" \
+                      -H "Content-Type: application/json" \
+                      --data @invalid_payload.json)
+
+                    echo "Invalid request HTTP code: $http_code"
+                    echo "Invalid response:"
+                    cat invalid_response.json
+                    echo
+
+                    if [ "$http_code" -lt 400 ]; then
+                        echo "Expected an error response for malformed input"
+                        exit 1
+                    fi
+                '''
+            }
+        }
+        stage('Cleanup') {
+            steps {
+                sh 'docker ps -q --filter ancestor=$IMAGE_NAME | xargs -r docker stop'
+            }
+        }
+    }
+    post {
+        always {
+            sh '''
+                set +e
+                docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+            '''
+        }
+        success {
+            echo 'SUCCESS'
+        }
+        failure {
+            echo 'FAILURE'
+        }
+    }
+
+
+}
