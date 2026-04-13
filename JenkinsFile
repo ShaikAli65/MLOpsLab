@@ -98,7 +98,8 @@ PY
                     cat > invalid_payload.json <<'EOF'
                     {
                       "fixed_acidity": 7.4,
-                      "volatile_acidity": 0.7
+                      "volatile_acidity": 0.7,
+                      "some_random_field": "unexpected"
                     }
 EOF
 
