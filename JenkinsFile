@@ -4,7 +4,8 @@ pipeline {
     environment {
         IMAGE_NAME = "shaik2022bcs0118/mlops:latest"        
         CONTAINER_NAME = "shaik2022bcs0118-wine-api"
-        PORT = "8000"
+        PORT = "8083"
+        CONTAINER_PORT = "8000"
     }
 
     stages {
@@ -16,7 +17,7 @@ pipeline {
         stage('Run Container') {
             steps {
                 sh '''
-                docker run -d -p $PORT:$PORT --name "$CONTAINER_NAME" $IMAGE_NAME 
+                docker run -d -p $PORT:$CONTAINER_PORT --name "$CONTAINER_NAME" $IMAGE_NAME 
                 '''
             }
         }
@@ -27,7 +28,7 @@ pipeline {
                     def ready = false
                     for (int i = 0; i < retries; i++) {
                         try {
-                            sh 'curl -f http://localhost:8000/health'
+                            sh "curl -f http://host.docker.internal:${PORT}/health"
                             ready = true
                             break
                         } catch(err) {
@@ -56,7 +57,7 @@ pipeline {
 
                     response_file="valid_response.json"
                     http_code=$(curl -s -o "$response_file" -w "%{http_code}" \
-                      -X POST "http://localhost:${PORT}/predict" \
+                      -X POST "http://host.docker.internal:${PORT}/predict" \
                       -H "Content-Type: application/json" \
                       --data @valid_payload.json)
 
@@ -102,7 +103,7 @@ PY
                     EOF
 
                     http_code=$(curl -s -o invalid_response.json -w "%{http_code}" \
-                      -X POST "http://localhost:${PORT}/predict" \
+                      -X POST "http://host.docker.internal:${PORT}/predict" \
                       -H "Content-Type: application/json" \
                       --data @invalid_payload.json)
 
